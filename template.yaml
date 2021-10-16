@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sagemaker-intranet
+
+  Sample SAM Template for sagemaker-intranet
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+  Api:
+    EndpointConfiguration: 
+      Type: PRIVATE
+      VPCEndpointIds:
+      - !Ref ApiVpcEndpoint
+    Auth:
+      ResourcePolicy:
+        CustomStatements: # Supports Ref and Fn::If conditions, does not work with AWS::NoValue in policy statements
+        - Effect: Allow
+          Principal: "*"
+          Action: execute-api:Invoke
+
+Parameters:
+  RequiredSageMakerDomainId:
+    Type: String
+    Default: "*"
+
+Resources:
+  SageMakerPresignedUrlFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: sagemaker_intranet/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Architectures:
+        - x86_64
+      Events:
+        SageMakerPresignedUrl:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /sagemaker-presigned-url
+            Method: get
+            RequestParameters:
+            - method.request.querystring.userprofile
+      VpcConfig:
+        SubnetIds:
+        - !Ref PrivateSubnet
+        SecurityGroupIds:
+        - !Ref PrivateSubnetSecurityGroup
+      Policies: # access to sagemaker is addedd as inline policy
+      - Statement:
+        - Sid: SageMakerCreatePresignedUrlPolicy
+          Effect: Allow
+          Action:
+          - sagemaker:CreatePresignedDomainUrl
+          Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:user-profile/${RequiredSageMakerDomainId}/*'
+  
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 11.1.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:  !Join ['', [!Ref "AWS::StackName", "-VPC" ]]
+  
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 11.1.0.64/26
+      AvailabilityZone: !Select [ 0, !GetAZs ]    # Get the first AZ in the list       
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Private-Subnet
+
+  PrivateSubnetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow http to client host # please change this to use Principle of Least Privilege before it is used in production env
+        VpcId: !Ref VPC
+        SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  ApiVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !Ref PrivateSubnetSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
+      SubnetIds: 
+        - !Ref PrivateSubnet
+      VpcEndpointType: "Interface"
+      VpcId: !Ref VPC
+
+  SageMakerStuidoVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !Ref PrivateSubnetSecurityGroup
+      ServiceName: !Sub "aws.sagemaker.${AWS::Region}.studio"
+      SubnetIds: 
+        - !Ref PrivateSubnet
+      VpcEndpointType: "Interface"
+      VpcId: !Ref VPC
+
+  SageMakerApiVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !Ref PrivateSubnetSecurityGroup
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sagemaker.api"
+      SubnetIds: 
+        - !Ref PrivateSubnet
+      VpcEndpointType: "Interface"
+      VpcId: !Ref VPC
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  SageMakerPresignedUrlApi:
+    Description: "API Gateway endpoint URL for Prod stage for SageMaker Presigned Url Lambda function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/sagemaker-presigned-url/"
+  SageMakerPresignedUrlFunction:
+    Description: "SageMaker Presigned Url Lambda Function ARN"
+    Value: !GetAtt SageMakerPresignedUrlFunction.Arn
+  SageMakerPresignedUrlFunctionIamRole:
+    Description: "Implicit IAM Role created for SageMaker Presigned Url Lambda function"
+    Value: !GetAtt SageMakerPresignedUrlFunctionRole.Arn
